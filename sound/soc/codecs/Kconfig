@@ -1097,6 +1097,12 @@ config SND_SOC_AW8896
 	help
 	  Enables support for aw8896 series Smart PA.
 
+config SND_SOC_FS16XX
+	tristate "Foursemi FS16XX amplifier"
+	depends on I2C
+	help
+	  Enables support for the Foursemi FS16XX smart amplifier.
+
 config SND_SOC_TFA98XX
 	tristate "NXP Semiconductors TFA98XX amplifier"
 	depends on I2C
