@@ -14,6 +14,7 @@
 /dts-v1/;
 
 #include "sda439.dtsi"
+#include "c330ae-pstore.dtsi"
 #include "sdm439-mtp.dtsi"
 
 / {
