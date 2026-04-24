@@ -261,6 +261,7 @@ enum msm_camera_i2c_operation {
 	MSM_CAM_READ_PAGE,
 	MSM_CAM_WRITE_DELAYUSEC,
 	MSM_CAM_READ_CONTINUOUS,
+	MSM_CAM_READ_GC5025A,
 };
 
 struct msm_sensor_i2c_sync_params {
