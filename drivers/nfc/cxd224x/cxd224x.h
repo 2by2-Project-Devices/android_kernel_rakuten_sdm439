@@ -18,6 +18,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+/*
+ * This software is contributed or developed by KYOCERA Corporation.
+ * (C) 2016 KYOCERA Corporation
+ * (C) 2017 KYOCERA Corporation
+ * (C) 2018 KYOCERA Corporation
+ */
 
 #ifndef _CXD224X_H
 #define _CXD224X_H
@@ -42,9 +48,7 @@ struct cxd224x_platform_data {
 	unsigned int en_gpio;
 	unsigned int wake_gpio;
 	unsigned int rst_gpio;
-	const char *clk_src;
-	bool clk_req;
-	unsigned int clkreq_gpio;
+	unsigned int rfs_gpio;
 };
 
 #endif

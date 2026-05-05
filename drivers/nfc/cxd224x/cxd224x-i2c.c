@@ -19,6 +19,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  *
  */
+/*
+ * This software is contributed or developed by KYOCERA Corporation.
+ * (C) 2016 KYOCERA Corporation
+ * (C) 2017 KYOCERA Corporation
+ * (C) 2018 KYOCERA Corporation
+ */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -40,13 +46,13 @@
 #include <linux/poll.h>
 #include <linux/version.h>
 #include <linux/of_gpio.h>
-#include <linux/clk.h>
 
 #include "cxd224x.h"
 
+#include <linux/cdev.h>
+
 #ifdef CONFIG_WAKELOCK
 #include <linux/wakelock.h>
-
 
 /* wake lock timeout for HOSTINT (sec) */
 #define CXD224X_WAKE_LOCK_TIMEOUT 10
@@ -71,6 +77,98 @@
 /* RESET */
 #define RESET_ASSERT_MS (1)
 
+//#define CONFIG_OF
+
+/* KC Custom */
+/* CXD224X device */
+#define CXD224X_DEV_NAME				"cxd224x-i2c"
+#define CXD224X_DEV_COUNT			   1
+
+/* RFS  device */
+#define RFS_DEV_COUNT				   1
+#define RFS_DEV_NAME					"felica_rfs"
+#define RFS_GPIO_VAL_H				  1
+#define RFS_GPIO_VAL_L				  0
+#define RFS_RET_STS_INACTIVE			0
+#define RFS_RET_STS_ACTIVE			  1
+
+/* USB device */
+#define VBUS_DEV_COUNT				  1
+#define VBUS_DEV_NAME				   "knfcvbus"
+
+/* DEBUG_LOG */
+#if 0
+#define DEBUG_KNFC_DRIVER
+#endif
+
+#if 0
+#define DEBUG_PRINT_LOG
+#endif
+
+#if defined(DEBUG_KNFC_DRIVER) || defined(DEBUG_PRINT_LOG)
+#define KNFC_LOG_D(fmt, args...) printk(KERN_INFO "[KNFC][%s]" fmt"\n", __func__, ## args)
+#else
+#define KNFC_LOG_D(fmt, args...)
+#endif
+
+/* INFO_LOG */
+#define KNFC_LOG_I(fmt, args...) printk(KERN_INFO "[KNFC][%s]" fmt"\n", __func__, ## args)
+
+/* ERROR_LOG */
+#define KNFC_LOG_E(fmt, args...) printk(KERN_ERR "[KNFC][%s]ERR " fmt"\n", __func__, ## args)
+
+#define REGISTER_AS_MISC_DRIVER		 1
+#define DEBUG_READ_BUF_SIZE			 255
+
+#ifdef DEBUG_KNFC_DRIVER
+#define CXDNFC_DEBUG_SKIP_RESPONSE_CTL  _IO(CXDNFC_MAGIC, 0xF0)
+#endif
+
+/************************************************************************/
+/*  GLOBAL															  */
+/************************************************************************/
+static struct class*		knfc_class = NULL;
+static struct cdev		  rfs_cdev;
+static struct cdev		  knfcvbus_cdev;
+
+static int				  g_nfc_rfs_gpio = -1;
+
+#if defined(DEBUG_KNFC_DRIVER) || defined(DEBUG_PRINT_LOG)
+static char				 g_debug_read_string_buf[DEBUG_READ_BUF_SIZE * 2];
+#endif
+
+#ifdef DEBUG_KNFC_DRIVER
+static int				  g_debug_skip_response;
+#endif
+
+/************************************************************************/
+/* PROTOTYPE															*/
+/************************************************************************/
+#if !REGISTER_AS_MISC_DRIVER
+static void	 cxd224x_exit(struct cdev *device);
+#endif
+static int	  cxd224x_dev_init(void);
+static void	 cxd224x_dev_exit(void);
+
+static ssize_t  rfs_read(struct file *file, char __user * buf, size_t len, loff_t * ppos);
+static int	  rfs_open(struct inode *inode, struct file *file);
+static int	  rfs_release(struct inode *inode, struct file *file);
+static int	  rfs_init(void);
+static void	 rfs_exit(void);
+
+static ssize_t  knfcvbus_read(struct file *file, char __user * buf, size_t len, loff_t * ppos);
+static int	  knfcvbus_open(struct inode *inode, struct file *file);
+static int	  knfcvbus_release(struct inode *inode, struct file *file);
+
+#if defined(DEBUG_KNFC_DRIVER) || defined(DEBUG_PRINT_LOG)
+static char	 *print_byte_array(unsigned char *buf, int size);
+#endif
+
+extern bool	 is_vbus_active(void);
+
+/************************************************************************/
+/* STRUCT															   */
+/************************************************************************/
 struct cxd224x_dev {
 	wait_queue_head_t read_wq;
 	struct mutex read_mutex;
@@ -82,9 +180,6 @@ struct cxd224x_dev {
 	spinlock_t irq_enabled_lock;
 	unsigned int users;
 	unsigned int count_irq;
-	/* CLK control */
-	bool			clk_run;
-	struct	clk		*s_clk;
 #ifdef CONFIG_WAKELOCK
 	struct wake_lock wakelock;    /* wake lock for HOSTINT */
 	struct wake_lock wakelock_lp; /* wake lock for low-power-mode */
@@ -94,11 +189,6 @@ struct cxd224x_dev {
 	struct work_struct qmsg;
 };
 
-static struct cxd224x_dev *cxd224x_static;
-static struct kobject *nfcKobj;
-static unsigned int isRFCal = 0;
-static unsigned int isFreeGPIO = 0;
-static unsigned int cxdstate = 0;
 #if defined(CONFIG_NFC_CXD224X_RST) || defined(CONFIG_NFC_CXD224X_RST_MODULE)
 static void cxd224x_workqueue(struct work_struct *work)
 {
@@ -226,6 +316,12 @@ static ssize_t cxd224x_dev_read(struct file *filp, char __user *buf,
 
 	mutex_unlock(&cxd224x_dev->read_mutex);
 
+#ifdef DEBUG_KNFC_DRIVER
+	if ( g_debug_skip_response > 0 ) {
+		total = 3;
+		g_debug_skip_response--;
+	} else
+#endif
 	if (total > count || copy_to_user(buf, tmp, total)) {
 		dev_err(&cxd224x_dev->client->dev,
 			"failed to copy to user space, total = %d\n", total);
@@ -310,62 +406,10 @@ static int cxd224x_dev_release(struct inode *inode, struct file *filp)
 	return ret;
 }
 
-/*
- * Routine to enable clock.
- * this routine can be extended to select from multiple
- * sources based on clk_src_name.
- */
-static int cxd224x_clock_select(struct cxd224x_dev *cxd224x_dev)
-{
-	int r = 0;
-
-	cxd224x_dev->s_clk = clk_get(&cxd224x_dev->client->dev, "ref_clk");
-
-	if (cxd224x_dev->s_clk == NULL)
-		goto err_clk;
-
-	if (cxd224x_dev->clk_run == false)
-		r = clk_prepare_enable(cxd224x_dev->s_clk);
-
-	if (r)
-		goto err_clk;
-
-	cxd224x_dev->clk_run = true;
-
-	return r;
-
-err_clk:
-	r = -1;
-	return r;
-}
-
-/*
- * Routine to disable clocks
- */
-static int cxd224x_clock_deselect(struct cxd224x_dev *cxd224x_dev)
-{
-	int r = -1;
-
-	if (cxd224x_dev->s_clk != NULL) {
-		if (cxd224x_dev->clk_run == true) {
-			clk_disable_unprepare(cxd224x_dev->s_clk);
-			cxd224x_dev->clk_run = false;
-		}
-		return 0;
-	}
-	return r;
-}
-
 static long cxd224x_dev_unlocked_ioctl(struct file *filp, unsigned int cmd,
 				       unsigned long arg)
 {
 	struct cxd224x_dev *cxd224x_dev = filp->private_data;
-
-	int ret = -1;
-
-	//if(isRFCal == 1) return 0;
-
-	if(isFreeGPIO == 1) return 0;
 
 	switch (cmd) {
 	case CXDNFC_RST_CTL:
@@ -378,7 +422,6 @@ static long cxd224x_dev_unlocked_ioctl(struct file *filp, unsigned int cmd,
 #endif
 		break;
 	case CXDNFC_POWER_CTL:
-		if(isRFCal == 1) return 0;
 #if defined(CONFIG_NFC_CXD224X_VEN) || defined(CONFIG_NFC_CXD224X_VEN_MODULE)
 		if (arg == 0) {
 			gpio_set_value(cxd224x_dev->en_gpio, 1);
@@ -388,22 +431,10 @@ static long cxd224x_dev_unlocked_ioctl(struct file *filp, unsigned int cmd,
 			/* do nothing */
 		}
 #else
-		dev_err(&cxd224x_dev->client->dev,
-			"%s, POWER cmd (%x, %lx)\n", __func__, cmd, arg);
-		if (arg == 0) {
-			ret = cxd224x_clock_deselect(cxd224x_dev);
-		} else if (arg == 1) {
-			ret = cxd224x_clock_select(cxd224x_dev);
-		} else {
-			/* do nothing */
-		}
-		dev_err(&cxd224x_dev->client->dev,
-			"%s, POWER ret (%x, %x)\n", __func__, ret, ret);
-		//return 1; /* not support */
+		return 1; /* not support */
 #endif
 		break;
 	case CXDNFC_WAKE_CTL:
-		if(isRFCal == 1) return 0;
 		if (arg == 0) {
 #ifdef CONFIG_WAKELOCK
 			wake_lock_timeout(&cxd224x_dev->wakelock_lp,
@@ -411,13 +442,9 @@ static long cxd224x_dev_unlocked_ioctl(struct file *filp, unsigned int cmd,
 #endif
 			/* PON HIGH (normal power mode)*/
 			gpio_set_value(cxd224x_dev->gpio->wake_gpio, 1);
-			//ret = cxd224x_clock_select(cxd224x_dev);
-		    dev_err(&cxd224x_dev->client->dev, "%s, PON 1 \n", __func__);
 		} else if (arg == 1) {
 			/* PON LOW (low power mode) */
 			gpio_set_value(cxd224x_dev->gpio->wake_gpio, 0);
-			//ret = cxd224x_clock_deselect(cxd224x_dev);
-            dev_err(&cxd224x_dev->client->dev, "%s, PON 0 \n", __func__);
 #ifdef CONFIG_WAKELOCK
 			wake_unlock(&cxd224x_dev->wakelock_lp);
 #endif
@@ -425,6 +452,12 @@ static long cxd224x_dev_unlocked_ioctl(struct file *filp, unsigned int cmd,
 			/* do nothing */
 		}
 		break;
+#ifdef DEBUG_KNFC_DRIVER
+	case CXDNFC_DEBUG_SKIP_RESPONSE_CTL:
+		KNFC_LOG_I("START CXDNFC_DEBUG_SKIP_RESPONSE_CTL cmd:0x%x, arg:0x%lx\n", cmd, arg);
+		g_debug_skip_response = (int)arg;
+		break;
+#endif
 	default:
 		dev_err(&cxd224x_dev->client->dev,
 			"%s, unknown cmd (%x, %lx)\n", __func__, cmd, arg);
@@ -476,17 +509,15 @@ static int cxd224x_parse_dt(struct device *dev,
 	}
 #endif
 
-	if (of_property_read_string(dev->of_node, "qcom,clk-src", &pdata->clk_src))
-		pdata->clk_req = false;
-	else
-		pdata->clk_req = true;
-
-	pdata->clkreq_gpio = of_get_named_gpio_flags(dev->of_node, "sony,nfc-clkreq", 0, NULL);
-
 	pdata->wake_gpio =
 		of_get_named_gpio_flags(dev->of_node, "sony,nfc_wake", 0, NULL);
 	if (pdata->wake_gpio < 0) {
 		pr_err("failed to get \"nfc_wake\"\n");
+		goto dt_err;
+	}
+	pdata->rfs_gpio = of_get_named_gpio_flags(dev->of_node, "sony,nfc_rfs", 0,NULL);
+	if (pdata->rfs_gpio< 0) {
+		pr_err( "failed to get \"nfc_rfs\"\n");
 		goto dt_err;
 	}
 	return 0;
@@ -495,55 +526,6 @@ dt_err:
 	return ret;
 }
 #endif
-
-static ssize_t cxd224x_store_rfcal(struct device *dev,
-				    struct device_attribute *attr,
-				    const char *buf, size_t count)
-{
-	unsigned long val = 0;
-	int ret;
-
-	ret = kstrtoul(buf, 10, &val);
-	if (ret)
-		return ret;
-
-	if (val == 1)
-	{
-        gpio_set_value(cxd224x_static->gpio->wake_gpio, 1);
-        cxd224x_clock_select(cxd224x_static);
-        isRFCal = 1;
-	} else {
-        gpio_set_value(cxd224x_static->gpio->wake_gpio, 0);
-        cxd224x_clock_deselect(cxd224x_static);
-        isRFCal = 0;
-	}
-	return count;
-}
-
-static ssize_t cxd224x_show_rfcal(struct device *dev,
-				 struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d", isRFCal);
-}
-
-static ssize_t ftm_cxd224x_show(struct device *dev,
-				 struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "%d", cxdstate);
-}
-
-static DEVICE_ATTR(rfcal, 0660, cxd224x_show_rfcal, cxd224x_store_rfcal);
-static DEVICE_ATTR(cxdstate, 0660, ftm_cxd224x_show, NULL);
-
-static struct attribute *cxd224x_attributes[] = {
-	&dev_attr_rfcal.attr,
-	&dev_attr_cxdstate.attr,
-	NULL
-};
-
-static const struct attribute_group cxd224x_attr_group = {
-	.attrs = cxd224x_attributes,
-};
 
 static int cxd224x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
@@ -559,7 +541,12 @@ static int cxd224x_probe(struct i2c_client *client,
 	int rst_gpio_ok = 0;
 #endif
 	int wake_gpio_ok = 0;
-	int clkreq_gpio_ok = 0;
+	int rfs_gpio_ok = 0;
+
+#if !REGISTER_AS_MISC_DRIVER
+	struct device *class_dev;
+	dev_t dev = MKDEV(MISC_MAJOR, 0);
+#endif
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		dev_err(&client->dev, "need I2C_FUNC_I2C\n");
@@ -638,33 +625,11 @@ static int cxd224x_probe(struct i2c_client *client,
 	wake_gpio_ok = 1;
 	ret = gpio_direction_output(platform_data->wake_gpio, 0);
 
-#if 1
-	if (gpio_is_valid(platform_data->clkreq_gpio)) {
-		ret = gpio_request(platform_data->clkreq_gpio,
-			"nfc_clkreq_gpio");
-		if (ret) {
-			dev_err(&client->dev,
-				"%s: unable to request nfc clkreq gpio [%d]\n",
-				__func__, platform_data->clkreq_gpio);
-			goto err_exit;
-		}
-		clkreq_gpio_ok = 1;
-		ret = gpio_direction_input(platform_data->clkreq_gpio);
-		if (ret) {
-			dev_err(&client->dev,
-			"%s: cannot set direction for nfc clkreq gpio [%d]\n",
-			__func__, platform_data->clkreq_gpio);
-			goto err_exit;
-		}
-		dev_info(&client->dev, "%s, clkreq_gpio(%d)\n", __func__,
-			 platform_data->clkreq_gpio);
-	} else {
-		dev_err(&client->dev,
-			"%s: clkreq gpio not provided\n", __func__);
-		//goto err_exit;
-	}
-#endif
-
+	ret = gpio_request_one(platform_data->rfs_gpio, GPIOF_IN, "nfc_rfs");
+	if (ret)
+		goto err_exit;
+	rfs_gpio_ok=1;
+	g_nfc_rfs_gpio = platform_data->rfs_gpio;
 	cxd224x_dev = kzalloc(sizeof(*cxd224x_dev), GFP_KERNEL);
 	if (cxd224x_dev == NULL) {
 		dev_err(&client->dev,
@@ -719,17 +684,6 @@ static int cxd224x_probe(struct i2c_client *client,
 	}
 	cxd224x_disable_irq(cxd224x_dev);
 	i2c_set_clientdata(client, cxd224x_dev);
-    cxdstate = 1;
-	cxd224x_static = cxd224x_dev;
-	nfcKobj = kobject_create_and_add("nfc_dev", kernel_kobj);
-	if(nfcKobj) {
-		ret = sysfs_create_group(nfcKobj, &cxd224x_attr_group);
-		if (ret){
-			dev_err(&client->dev, "%s sysfs_create_group failed.\n", __func__);
-			kobject_put(nfcKobj);
-		}
-	}
-
 	dev_info(&client->dev,
 		 "%s, probing cxd224x driver exited successfully\n", __func__);
 	return 0;
@@ -738,10 +692,9 @@ err_request_irq_failed:
 	misc_deregister(&cxd224x_dev->cxd224x_device);
 err_misc_register:
 	mutex_destroy(&cxd224x_dev->read_mutex);
-	mutex_destroy(&cxd224x_dev->lock);
+        mutex_destroy(&cxd224x_dev->lock);
 	kfree(cxd224x_dev);
 err_exit:
-	isFreeGPIO = 1;
 	if (irq_gpio_ok)
 		gpio_free(platform_data->irq_gpio);
 #if defined(CONFIG_NFC_CXD224X_VEN) || defined(CONFIG_NFC_CXD224X_VEN_MODULE)
@@ -755,9 +708,8 @@ err_exit:
 	if (wake_gpio_ok)
 		gpio_free(platform_data->wake_gpio);
 
-	if (clkreq_gpio_ok)
-		gpio_free(platform_data->clkreq_gpio);
-
+	if(rfs_gpio_ok)
+		gpio_free(platform_data->rfs_gpio);
 #if defined(CONFIG_OF)
 	if (platform_data)
 		kfree(platform_data);
@@ -770,18 +722,15 @@ static int cxd224x_remove(struct i2c_client *client)
 	struct cxd224x_dev *cxd224x_dev;
 
 	cxd224x_dev = i2c_get_clientdata(client);
-	sysfs_remove_group(&client->dev.kobj, &cxd224x_attr_group);
-	kobject_put(nfcKobj);
 #ifdef CONFIG_WAKELOCK
 	wake_lock_destroy(&cxd224x_dev->wakelock);
 	wake_lock_destroy(&cxd224x_dev->wakelock_lp);
 #endif
 	free_irq(client->irq, cxd224x_dev);
 	misc_deregister(&cxd224x_dev->cxd224x_device);
+        mutex_destroy(&cxd224x_dev->lock);
 	mutex_destroy(&cxd224x_dev->read_mutex);
-	mutex_destroy(&cxd224x_dev->lock);
 	if (cxd224x_dev->gpio) {
-		isFreeGPIO = 1;
 		gpio_free(cxd224x_dev->gpio->irq_gpio);
 		gpio_free(cxd224x_dev->gpio->wake_gpio);
 
@@ -792,6 +741,7 @@ static int cxd224x_remove(struct i2c_client *client)
 		gpio_free(cxd224x_dev->gpio->rst_gpio);
 #endif
 
+		gpio_free(cxd224x_dev->gpio->rfs_gpio);
 #if defined(CONFIG_OF)
 
 		kfree(cxd224x_dev->gpio);
@@ -833,38 +783,329 @@ static const struct dev_pm_ops cxd224x_pm_ops = {
 };
 #endif
 
-static const struct i2c_device_id cxd224x_id[] = {{"cxd224x-i2c", 0}, {}};
+static const struct file_operations rfs_fileops = {
+	.owner   = THIS_MODULE,
+	.read	= rfs_read,
+	.open	= rfs_open,
+	.release = rfs_release,
+};
+
+static const struct file_operations knfcvbus_fileops = {
+	.owner   = THIS_MODULE,
+	.read	= knfcvbus_read,
+	.open	= knfcvbus_open,
+	.release = knfcvbus_release,
+};
+
+/*
+ * function_rfs
+ */
+static ssize_t rfs_read(struct file *file, char __user * buf, size_t len, loff_t * ppos)
+{
+	int ret;
+	char on;
+
+	KNFC_LOG_D("START");
+
+	if ( len < 1 ) {
+		KNFC_LOG_E("length check len = %d", (int)len);
+		return -EIO;
+	}
+
+	ret = gpio_get_value_cansleep( g_nfc_rfs_gpio );
+	if (ret < 0) {
+		KNFC_LOG_E("gpio_get_value ret = %d", ret);
+		return ret;
+	}
+	if( RFS_GPIO_VAL_H == ret ){
+		on = RFS_RET_STS_INACTIVE;
+	}else{
+		on = RFS_RET_STS_ACTIVE;
+	}
+	len = 1;
+
+	if (copy_to_user(buf, &on, len)) {
+		KNFC_LOG_E("copy_to_user");
+		return -EFAULT;
+	}
+
+	KNFC_LOG_D("END on = %d, len = %d", on, (int)len);
+
+	return len;
+}
+
+static int rfs_open(struct inode *inode, struct file *file)
+{
+	KNFC_LOG_D("");
+	return 0;
+}
+
+static int rfs_release(struct inode *inode, struct file *file)
+{
+	KNFC_LOG_D("");
+	return 0;
+}
+
+static int rfs_init(void)
+{
+	int sdResult = 0;
+	struct device *class_dev;
+
+	dev_t dev = MKDEV(MISC_MAJOR, 0);
+
+	KNFC_LOG_I("START");
+
+	sdResult = alloc_chrdev_region(&dev , 0 , RFS_DEV_COUNT, RFS_DEV_NAME);
+	if (sdResult) {
+		KNFC_LOG_E("alloc_chrdev_region sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	cdev_init(&rfs_cdev, &rfs_fileops);
+	rfs_cdev.owner = THIS_MODULE;
+
+	sdResult = cdev_add(&rfs_cdev, dev, RFS_DEV_COUNT);
+	if (sdResult) {
+		unregister_chrdev_region(dev, RFS_DEV_COUNT);
+		KNFC_LOG_E("cdev_add sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	class_dev = device_create(knfc_class, NULL, dev, NULL, RFS_DEV_NAME);
+	if (IS_ERR(class_dev)) {
+		cdev_del(&rfs_cdev);
+		unregister_chrdev_region(dev, RFS_DEV_COUNT);
+		sdResult = PTR_ERR(class_dev);
+		KNFC_LOG_E("device_create sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	KNFC_LOG_I("END");
+
+	return sdResult;
+}
+
+static void rfs_exit(void)
+{
+	dev_t dev = MKDEV(MISC_MAJOR, 0);
+
+	KNFC_LOG_I("START");
+
+	cdev_del(&rfs_cdev);
+	unregister_chrdev_region(dev, RFS_DEV_COUNT);
+
+	KNFC_LOG_I("END");
+}
+
+/*
+ * USB device
+ */
+static ssize_t knfcvbus_read(struct file *file, char __user * buf, size_t len, loff_t * ppos)
+{
+	bool vbus_val = 0;
+
+	KNFC_LOG_D("START");
+
+	if( 1 > len ){
+		KNFC_LOG_E("length check len = %d", (int)len);
+		return -EIO;
+	}
+	//vbus_val = is_vbus_active();
+	vbus_val = true;
+
+	if (copy_to_user(buf, &vbus_val, 1)) {
+		KNFC_LOG_E("copy_to_user");
+		return -EFAULT;
+	}
+
+	KNFC_LOG_D("END rate_val = %d, len = %d", (int)vbus_val, (int)len);
+
+	return 1;
+}
+
+static int knfcvbus_open(struct inode *inode, struct file *file)
+{
+	KNFC_LOG_D("START");
+	KNFC_LOG_D("END");
+	return 0;
+}
+
+static int knfcvbus_release(struct inode *inode, struct file *file)
+{
+	KNFC_LOG_D("START");
+	KNFC_LOG_D("END");
+	return 0;
+}
+
+static int knfcvbus_init(void)
+{
+	int sdResult = 0;
+	struct device *class_dev;
+
+	dev_t dev = MKDEV(MISC_MAJOR, 0);
+
+	KNFC_LOG_I("START");
+
+	sdResult = alloc_chrdev_region(&dev , 0 , VBUS_DEV_COUNT, VBUS_DEV_NAME);
+	if (sdResult) {
+		KNFC_LOG_E("alloc_chrdev_region sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	cdev_init(&knfcvbus_cdev, &knfcvbus_fileops);
+	knfcvbus_cdev.owner = THIS_MODULE;
+
+	sdResult = cdev_add(&knfcvbus_cdev, dev, VBUS_DEV_COUNT);
+	if (sdResult) {
+		unregister_chrdev_region(dev, VBUS_DEV_COUNT);
+		KNFC_LOG_E("cdev_add sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	class_dev = device_create(knfc_class, NULL, dev, NULL, VBUS_DEV_NAME);
+	if (IS_ERR(class_dev)) {
+		cdev_del(&knfcvbus_cdev);
+		unregister_chrdev_region(dev, VBUS_DEV_COUNT);
+		sdResult = PTR_ERR(class_dev);
+		KNFC_LOG_E("device_create sdResult = %d", sdResult);
+		return sdResult;
+	}
+
+	KNFC_LOG_I("END");
+
+	return sdResult;
+}
+
+static void knfcvbus_exit(void)
+{
+	dev_t dev = MKDEV(MISC_MAJOR, 0);
+
+	KNFC_LOG_I("START");
+
+	device_destroy(knfc_class, dev);
+
+	cdev_del(&knfcvbus_cdev);
+	unregister_chrdev_region(dev, VBUS_DEV_COUNT);
+
+	KNFC_LOG_I("END");
+}
+
+#ifdef DEBUG_KNFC_DRIVER
+static char *print_byte_array(unsigned char *buf, int size)
+{
+	int cnt = 0;
+
+	memset(g_debug_read_string_buf, '\0', DEBUG_READ_BUF_SIZE * 2);
+
+	for ( cnt = 0; cnt < size; cnt++ ) {
+		sprintf(&g_debug_read_string_buf[cnt * 2], "%02x" ,*buf);
+		buf++;
+	}
+
+	return g_debug_read_string_buf;
+}
+#endif
+
+
+#if 0 //def CONFIG_OF
+static struct of_device_id cxd224x_dt_match[] = {
+	{ .compatible = "sony,cxd224x-i2c", },
+	{},
+};
+MODULE_DEVICE_TABLE(of, cxd224x_dt_match);
+#endif
+
+
+static const struct i2c_device_id cxd224x_id[] = {
+	{CXD224X_DEV_NAME, 0},
+	{}
+};
 MODULE_DEVICE_TABLE(i2c, cxd224x_id);
 
 static struct i2c_driver cxd224x_driver = {
 	.id_table = cxd224x_id,
 	.probe = cxd224x_probe,
 	.remove = cxd224x_remove,
-	.driver =
-		{
-			.owner = THIS_MODULE,
-			.name = "cxd224x-i2c",
+	.driver = {
+		.owner = THIS_MODULE,
+		.name = CXD224X_DEV_NAME,
 #ifdef CONFIG_PM
 			.pm = &cxd224x_pm_ops,
 #endif
 		},
 };
+static int cxd224x_dev_init(void)
+{
+	return i2c_add_driver(&cxd224x_driver);
+}
+
+static void cxd224x_dev_exit(void)
+{
+	i2c_del_driver(&cxd224x_driver);
+}
 
 /*
  * module load/unload record keeping
  */
 
-static int __init cxd224x_dev_init(void)
+/*
+ *  
+ * knfc_init
+ *   
+ */
+static int __init knfc_init(void)
 {
-	return i2c_add_driver(&cxd224x_driver);
-}
-module_init(cxd224x_dev_init);
+	int ret;
 
-static void __exit cxd224x_dev_exit(void)
-{
-	i2c_del_driver(&cxd224x_driver);
+	KNFC_LOG_I("START");
+	knfc_class = class_create(THIS_MODULE, "knfc");
+
+	if (IS_ERR(knfc_class)) {
+		return PTR_ERR(knfc_class);
+	}
+
+	ret = cxd224x_dev_init();
+	if( ret < 0 ){
+		KNFC_LOG_E("cxd224x_dev_init err\n");
+		return ret;
+	}
+
+	ret = rfs_init();
+	if( ret < 0 ){
+		KNFC_LOG_E("rfs init err\n");
+		return ret;
+	}
+
+	ret = knfcvbus_init();
+	if( ret < 0 ){
+		KNFC_LOG_E("knfcvbus_init err = %d\n",ret);
+	}
+
+	KNFC_LOG_I("END");
+	return 0;
 }
-module_exit(cxd224x_dev_exit);
+module_init(knfc_init);
+
+/*
+ * knfc_exit
+ */
+static void  __exit knfc_exit(void)
+{
+	KNFC_LOG_I("START");
+
+	class_destroy( knfc_class );
+
+	rfs_exit();
+
+	knfcvbus_exit();
+
+	cxd224x_dev_exit();
+
+	KNFC_LOG_I("END");
+
+	return;
+}
+module_exit(knfc_exit);
 
 MODULE_AUTHOR("Sony");
 MODULE_DESCRIPTION("NFC cxd224x driver");
