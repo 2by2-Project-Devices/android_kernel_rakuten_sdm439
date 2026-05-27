@@ -1,0 +1,17 @@
+/*
+ * C330AE complete board DTB - Based on qcom sdm439
+ */
+
+/dts-v1/;
+
+#include "../qcom/sdm439.dtsi"
+
+#include "c330ae/c330ae-pstore.dtsi"
+#include "c330ae/c330ae-overlay.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. SDM439 MTP";
+	compatible = "qcom,sdm439";
+	qcom,pmic-id = <0x010016 0x25 0x0 0x0>;
+	qcom.pmic-name = "PMI632";
+};

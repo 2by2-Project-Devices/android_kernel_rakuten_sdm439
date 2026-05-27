@@ -1,0 +1,128 @@
+/* C330AE pinctrl states missing from the shared SDM439 base. */
+
+/*
+ * C330AE uses GPIO50 for panel reset.  The shared SDM439 MTP state drives
+ * GPIO98/GPIO99, which conflicts with the DBMD4 SPI bus.
+ */
+&mdss_dsi_active {
+	mux {
+		pins = "gpio50";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio50";
+		drive-strength = <8>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&mdss_dsi_suspend {
+	mux {
+		pins = "gpio50";
+		function = "gpio";
+	};
+
+	config {
+		pins = "gpio50";
+		drive-strength = <2>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&tlmm {
+	spi8_default: spi8_default {
+		mux {
+			pins = "gpio96", "gpio97", "gpio99";
+			function = "blsp_spi8";
+		};
+
+		config {
+			pins = "gpio96", "gpio97", "gpio99";
+			drive-strength = <12>;
+			bias-disable;
+		};
+	};
+
+	spi8_sleep: spi8_sleep {
+		mux {
+			pins = "gpio96", "gpio97", "gpio99";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio96", "gpio97", "gpio99";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	spi8_cs0_active: cs0_active {
+		mux {
+			pins = "gpio98";
+			function = "blsp_spi8";
+		};
+
+		config {
+			pins = "gpio98";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	spi8_cs0_sleep: cs0_sleep {
+		mux {
+			pins = "gpio98";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio98";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	nfc {
+		nfc_gpio130_default: nfc_gpio130_default {
+			mux {
+				pins = "gpio130";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio130";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+
+		nfc_gpio125_default: nfc_gpio125_default {
+			mux {
+				pins = "gpio125";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio125";
+				drive-strength = <2>;
+				bias-disable;
+			};
+		};
+
+		nfc_gpio16_active: nfc_gpio16_active {
+			mux {
+				pins = "gpio16";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio16";
+				drive-strength = <2>;
+				bias-pull-up;
+			};
+		};
+	};
+};

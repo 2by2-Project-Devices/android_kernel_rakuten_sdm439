@@ -1,0 +1,91 @@
+/* C330AE DBMD4 always-listening voice DSP. */
+
+&soc {
+	spi_8: spi@7af8000 {
+		compatible = "qcom,spi-qup-v2";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg-names = "spi_physical", "spi_bam_physical";
+		reg = <0x7af8000 0x600>,
+			<0x7ac4000 0x1f000>;
+		interrupt-names = "spi_irq", "spi_bam_irq";
+		interrupts = <0 302 0>, <0 239 0>;
+		spi-max-frequency = <19200000>;
+		pinctrl-names = "spi_default", "spi_sleep";
+		pinctrl-0 = <&spi8_default &spi8_cs0_active>;
+		pinctrl-1 = <&spi8_sleep &spi8_cs0_sleep>;
+		clocks = <&clock_gcc clk_gcc_blsp2_ahb_clk>,
+			<&clock_gcc clk_gcc_blsp2_qup4_spi_apps_clk>;
+		clock-names = "iface_clk", "core_clk";
+		qcom,infinite-mode = <0>;
+		qcom,use-bam;
+		qcom,use-pinctrl;
+		qcom,ver-reg-exists;
+		qcom,bam-consumer-pipe-index = <10>;
+		qcom,bam-producer-pipe-index = <11>;
+		qcom,master-id = <84>;
+		status = "ok";
+	};
+};
+
+&spi_8 {
+	status = "ok";
+
+	dbmd4_spi: dbmd4_interface@0 {
+		compatible = "dspg,dbmd4-spi";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		read-chunk-size = <0x2000>;
+		write-chunk-size = <0x20000>;
+		dma_min_buffer_size = <0>;
+	};
+};
+
+&soc {
+	dbmdx {
+		compatible = "dspg,dbmdx-codec";
+		vdd-gpio = <&tlmm 126 0>;
+		reset-gpio = <&tlmm 92 0>;
+		sv-gpio = <&tlmm 93 0>;
+		wakeup-gpio = <&tlmm 131 0>;
+		auto_buffering = <1>;
+		multi-interface-support = <1>;
+		cd-interfaces = <&dbmd4_spi>;
+		va-interfaces = <0 0 0 0>;
+		feature-va;
+		va-firmware-name = "dbmd4_va_fw.bin";
+		va-config = <0x80000000 0x80000000 0x80000000 0x80290020
+			0x802200e0 0x80158e8e 0x801b0020 0x801a0011
+			0x80230000 0x8013fff0 0x80107000 0x80000000
+			0x80000000 0x80000000>;
+		va-speeds = <0 460800 0 960000
+			0 2000000 0 4800000
+			0 3000000 0 4800000>;
+		va-mic-config = <0xf041 0x1044 0x0008>;
+		va-mic-mode = <4>;
+		master-clk-rate = <32768>;
+		firmware_id = <0xdbd4>;
+		use_gpio_for_wakeup = <1>;
+		wakeup_set_value = <0>;
+		auto_detection = <1>;
+		detection_buffer_channels = <0>;
+		min_samples_chunk_size = <128>;
+		pcm_streaming_mode = <1>;
+		boot_options = <0x200>;
+		send_uevent_on_detection = <1>;
+		send_uevent_after_buffering = <1>;
+		detection_after_buffering = <0>;
+		va_backlog_length = <2>;
+		va_backlog_length_okg = <1000>;
+		amodel_options = <0>;
+		analog_mic_analog_gain = <0x8a8a>;
+	};
+
+	dbmdx-snd-soc-platform {
+		compatible = "dspg,dbmdx-snd-soc-platform";
+	};
+
+	snd-dbmdx-mach-drv {
+		compatible = "dspg,snd-dbmdx-mach-drv";
+	};
+};

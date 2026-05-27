@@ -1,0 +1,90 @@
+/* C330AE parallel charger and external speaker amplifier. */
+
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&i2c_2 {
+	#include "../../qcom/smb1355.dtsi"
+
+	fs16xx@34 {
+		compatible = "foursemi,fs16xx";
+		reg = <0x34>;
+		fs,fs-dev = "left";
+		vddcore-supply = <&pm8953_l6>;
+		status = "okay";
+	};
+};
+
+&pmi632_gpios {
+	smb_en {
+		smb_en_default: smb_en_default {
+			pins = "gpio2";
+			function = "func1";
+			output-enable;
+		};
+	};
+
+	pmi632_sense {
+		pmi632_sense_default: pmi632_sense_default {
+			pins = "gpio7", "gpio8";
+			bias-high-impedance;
+			bias-disable;
+		};
+	};
+
+	pmi632_ctm {
+		pmi632_ctm_default: pmi632_ctm_default {
+			pins = "gpio1";
+			bias-high-impedance;
+			bias-disable;
+		};
+	};
+};
+
+&tlmm {
+	smb_int_default: smb_int_default {
+		mux {
+			pins = "gpio61";
+			function = "gpio";
+		};
+		config {
+			pins = "gpio61";
+			drive-strength = <2>;
+			bias-pull-up;
+			input-enable;
+		};
+	};
+};
+
+&smb1355_0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&smb_int_default
+		&smb_en_default &pmi632_sense_default &pmi632_ctm_default>;
+	interrupt-parent = <&tlmm>;
+	interrupts = <61 IRQ_TYPE_LEVEL_LOW>;
+
+	smb1355_charger_0: qcom,smb1355-charger@1000 {
+		status = "ok";
+		/delete-property/ io-channels;
+		/delete-property/ io-channels-names;
+		qcom,parallel-mode = <1>;
+		qcom,disable-ctm;
+		qcom,hw-die-temp-mitigation;
+	};
+};
+
+&smb1355_1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&smb_int_default
+		&smb_en_default &pmi632_sense_default &pmi632_ctm_default>;
+	interrupt-parent = <&tlmm>;
+	interrupts = <61 IRQ_TYPE_LEVEL_LOW>;
+
+	smb1355_charger_1: qcom,smb1355-charger@1000 {
+		status = "ok";
+		/delete-property/ io-channels;
+		/delete-property/ io-channels-names;
+		qcom,parallel-mode = <1>;
+		qcom,disable-ctm;
+		qcom,hw-die-temp-mitigation;
+	};
+};

@@ -1,0 +1,15 @@
+/*
+ * C330AE board overlay entry - Based on qcom sdm439
+ */
+
+/dts-v1/;
+/plugin/;
+
+#include "c330ae/c330ae-pstore.dtsi"
+#include "c330ae/c330ae-overlay.dtsi"
+
+/ {
+	model = "Rakuten C330AE";
+	compatible = "qcom,sdm439-mtp", "qcom,sdm439", "qcom,mtp";
+	qcom,board-id = <8 0>;
+};

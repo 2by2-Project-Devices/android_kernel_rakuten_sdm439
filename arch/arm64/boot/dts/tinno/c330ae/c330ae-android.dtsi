@@ -1,0 +1,10 @@
+/* C330AE Android boot metadata - No system-as-root */
+
+&{/firmware/android} {
+	/delete-node/ fstab;
+
+	vbmeta {
+		compatible = "android,vbmeta";
+		parts = "vbmeta,boot,system,vendor,dtbo,recovery";
+	};
+};

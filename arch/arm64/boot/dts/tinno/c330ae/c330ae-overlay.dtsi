@@ -1,0 +1,18 @@
+/*
+ * C330AE board overlay.
+ *
+ * This file is intentionally only board-level wiring.  The SDM439 SoC,
+ * PM8953/PMI632 PMICs, clocks, pinctrl groups, regulators and common
+ * multimedia blocks come from the shared base DTSI files.
+ */
+
+#include "c330ae-camera-pinctrl.dtsi"
+#include "c330ae-camera.dtsi"
+#include "c330ae-pinctrl.dtsi"
+#include "c330ae-display.dtsi"
+#include "c330ae-peripherals.dtsi"
+#include "c330ae-battery.dtsi"
+#include "c330ae-charger.dtsi"
+#include "c330ae-audio.dtsi"
+#include "c330ae-voice-dsp.dtsi"
+#include "c330ae-android.dtsi"

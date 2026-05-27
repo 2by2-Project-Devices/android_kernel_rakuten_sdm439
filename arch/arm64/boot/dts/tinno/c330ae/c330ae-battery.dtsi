@@ -1,0 +1,8 @@
+/* C330AE PMI632 battery profile. */
+
+/ {
+	qcom,battery-data {
+		qcom,batt-id-range-pct = <30>;
+		#include "c330ae-batterydata.dtsi"
+	};
+};

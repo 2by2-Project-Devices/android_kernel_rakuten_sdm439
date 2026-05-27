@@ -17,16 +17,10 @@ dts-dirs += renesas
 dts-dirs += rockchip
 dts-dirs += socionext
 dts-dirs += sprd
+dts-dirs += tinno
 dts-dirs += xilinx
 dts-dirs += lg
 dts-dirs += zte
-
-ifeq ($(CONFIG_PROJECT_c330ae_tinno),y)
-DTS_DIR := tinno
-else
-DTS_DIR := qcom
-endif
-dts-dirs += $(DTS_DIR)
 
 subdir-y	:= $(dts-dirs)
 
